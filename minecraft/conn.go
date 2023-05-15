@@ -1098,9 +1098,9 @@ func (conn *Conn) handleResourcePackDataInfo(pk *packet.ResourcePackDataInfo) er
 			})
 
 			if err != nil {
-				conn.log.Printf("Error write Packet? :%v", err)
+				conn.log.Println("Error write Packet? :", err)
 			} else {
-				conn.log.Printf("Write ResourcePack chunks")
+				conn.log.Println("Write ResourcePack chunks")
 			}
 			select {
 			case <-conn.close:
@@ -1110,7 +1110,7 @@ func (conn *Conn) handleResourcePackDataInfo(pk *packet.ResourcePackDataInfo) er
 				_, err := pack.buf.Write(frag)
 
 				if err != nil {
-					conn.log.Printf("Error? :%v", err)
+					conn.log.Println("Error? ", err)
 				}
 			}
 		}
@@ -1118,13 +1118,13 @@ func (conn *Conn) handleResourcePackDataInfo(pk *packet.ResourcePackDataInfo) er
 		defer conn.packMu.Unlock()
 
 		if pack.buf.Len() != int(pack.size) {
-			conn.log.Printf("incorrect resource pack size: expected %v, but got %v\n", pack.size, pack.buf.Len())
+			conn.log.Println("incorrect resource pack size: expected %v, but got %v\n", pack.size, pack.buf.Len())
 			return
 		}
 		// First parse the resource pack from the total byte buffer we obtained.
 		newPack, err := resource.FromBytes(pack.buf.Bytes())
 		if err != nil {
-			conn.log.Printf("invalid full resource pack data for UUID %v: %v\n", id, err)
+			conn.log.Println("invalid full resource pack data for UUID %v: %v\n", id, err)
 			return
 		}
 		conn.packQueue.packAmount--
@@ -1147,18 +1147,18 @@ func (conn *Conn) handleResourcePackChunkData(pk *packet.ResourcePackChunkData) 
 	if !ok {
 		// We haven't received a ResourcePackDataInfo packet from the server, so we can't use this data to
 		// download a resource pack.
-		conn.log.Printf("resource pack chunk data for resource pack that was not being downloaded")
+		conn.log.Println("resource pack chunk data for resource pack that was not being downloaded")
 		return fmt.Errorf("resource pack chunk data for resource pack that was not being downloaded")
 	}
 	lastData := pack.buf.Len()+int(pack.chunkSize) >= int(pack.size)
 	if !lastData && uint32(len(pk.Data)) != pack.chunkSize {
 		// The chunk data didn't have the full size and wasn't the last data to be sent for the resource pack,
 		// meaning we got too little data.
-		conn.log.Printf("resource pack chunk data had a length of %v, but expected %v", len(pk.Data), pack.chunkSize)
+		conn.log.Println("resource pack chunk data had a length of %v, but expected %v", len(pk.Data), pack.chunkSize)
 		return fmt.Errorf("resource pack chunk data had a length of %v, but expected %v", len(pk.Data), pack.chunkSize)
 	}
 	if pk.ChunkIndex != pack.expectedIndex {
-		conn.log.Printf("resource pack chunk data had chunk index %v, but expected %v", pk.ChunkIndex, pack.expectedIndex)
+		conn.log.Println("resource pack chunk data had chunk index %v, but expected %v", pk.ChunkIndex, pack.expectedIndex)
 		return fmt.Errorf("resource pack chunk data had chunk index %v, but expected %v", pk.ChunkIndex, pack.expectedIndex)
 	}
 	pack.expectedIndex++
@@ -1172,11 +1172,11 @@ func (conn *Conn) handleResourcePackChunkRequest(pk *packet.ResourcePackChunkReq
 	conn.log.Println("handleResourcePackChunkRequest")
 	current := conn.packQueue.currentPack
 	if current.UUID() != pk.UUID {
-		conn.log.Printf("resource pack chunk request had unexpected UUID: expected %v, but got %v", current.UUID(), pk.UUID)
+		conn.log.Println("resource pack chunk request had unexpected UUID: expected %v, but got %v", current.UUID(), pk.UUID)
 		return fmt.Errorf("resource pack chunk request had unexpected UUID: expected %v, but got %v", current.UUID(), pk.UUID)
 	}
 	if conn.packQueue.currentOffset != uint64(pk.ChunkIndex)*packChunkSize {
-		conn.log.Printf("resource pack chunk request had unexpected chunk index: expected %v, but got %v", conn.packQueue.currentOffset/packChunkSize, pk.ChunkIndex)
+		conn.log.Println("resource pack chunk request had unexpected chunk index: expected %v, but got %v", conn.packQueue.currentOffset/packChunkSize, pk.ChunkIndex)
 		return fmt.Errorf("resource pack chunk request had unexpected chunk index: expected %v, but got %v", conn.packQueue.currentOffset/packChunkSize, pk.ChunkIndex)
 	}
 	response := &packet.ResourcePackChunkData{
@@ -1193,7 +1193,7 @@ func (conn *Conn) handleResourcePackChunkRequest(pk *packet.ResourcePackChunkReq
 		// If we hit an EOF, we don't need to return an error, as we've simply reached the end of the content
 		// AKA the last chunk.
 		if err != io.EOF {
-			conn.log.Printf("error reading resource pack chunk: %v", err)
+			conn.log.Println("error reading resource pack chunk: %v", err)
 			return fmt.Errorf("error reading resource pack chunk: %v", err)
 		}
 
@@ -1219,7 +1219,6 @@ func (conn *Conn) handleResourcePackChunkRequest(pk *packet.ResourcePackChunkReq
 	}
 
 	conn.log.Println("handleResourcePackChunkRequest 4")
-	conn.log.Println("testi")
 
 	return nil
 }
