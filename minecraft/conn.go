@@ -1097,9 +1097,9 @@ func (conn *Conn) handleResourcePackDataInfo(pk *packet.ResourcePackDataInfo) er
 			})
 
 			if err != nil {
-				log.Printf("Error write Packet? :%v", err)
+				conn.log.Printf("Error write Packet? :%v", err)
 			} else {
-				log.Printf("Write ResourcePack chunks")
+				conn.log.Printf("Write ResourcePack chunks")
 			}
 			select {
 			case <-conn.close:
@@ -1109,7 +1109,7 @@ func (conn *Conn) handleResourcePackDataInfo(pk *packet.ResourcePackDataInfo) er
 				_, err := pack.buf.Write(frag)
 
 				if err != nil {
-					log.Printf("Error? :%v", err)
+					conn.log.Printf("Error? :%v", err)
 				}
 			}
 		}
