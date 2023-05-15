@@ -944,7 +944,7 @@ func (conn *Conn) hasPack(uuid string, version string, hasBehaviours bool) bool 
 }
 
 // packChunkSize is the size of a single chunk of data from a resource pack: 512 kB or 0.5 MB
-const packChunkSize = 1024 * 128
+const packChunkSize = 1024 * 64
 
 // handleResourcePackClientResponse handles an incoming resource pack client response packet. The packet is
 // handled differently depending on the response.
@@ -1091,6 +1091,7 @@ func (conn *Conn) handleResourcePackDataInfo(pk *packet.ResourcePackDataInfo) er
 
 	idCopy := pk.UUID
 	go func() {
+		conn.log.Println("===================== :DDDD #1")
 		for i := uint32(0); i < chunkCount; i++ {
 			err := conn.WritePacket(&packet.ResourcePackChunkRequest{
 				UUID:       idCopy,
@@ -1214,11 +1215,11 @@ func (conn *Conn) handleResourcePackChunkRequest(pk *packet.ResourcePackChunkReq
 
 	conn.log.Println("handleResourcePackChunkRequest 3")
 	if err := conn.WritePacket(response); err != nil {
-		conn.log.Printf("error writing resource pack chunk data packet: %v", err)
+		conn.log.Println("error writing resource pack chunk data packet: %v", err)
 		return fmt.Errorf("error writing resource pack chunk data packet: %v", err)
 	}
 
-	conn.log.Println("handleResourcePackChunkRequest 4")
+	conn.log.Println("handleResourcePackChunkRequest 4**", "test")
 
 	return nil
 }
