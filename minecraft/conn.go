@@ -1045,9 +1045,11 @@ func (conn *Conn) startGame() {
 func (conn *Conn) nextResourcePackDownload() error {
 	pk, ok := conn.packQueue.NextPack()
 	if !ok {
+		conn.log.Printf("no resource packs to download")
 		return fmt.Errorf("no resource packs to download")
 	}
 	if err := conn.WritePacket(pk); err != nil {
+		conn.log.Printf("error sending resource pack data info packet: %v", err)
 		return fmt.Errorf("error sending resource pack data info packet: %v", err)
 	}
 	// Set the next expected packet to ResourcePackChunkRequest packets.
@@ -1174,6 +1176,8 @@ func (conn *Conn) handleResourcePackChunkRequest(pk *packet.ResourcePackChunkReq
 	}
 	conn.packQueue.currentOffset += packChunkSize
 	// We read the data directly into the response's data.
+
+	conn.log.Println("handleResourcePackChunkRequest 1")
 	if n, err := current.ReadAt(response.Data, int64(response.DataOffset)); err != nil {
 		// If we hit an EOF, we don't need to return an error, as we've simply reached the end of the content
 		// AKA the last chunk.
@@ -1181,20 +1185,29 @@ func (conn *Conn) handleResourcePackChunkRequest(pk *packet.ResourcePackChunkReq
 			conn.log.Printf("error reading resource pack chunk: %v", err)
 			return fmt.Errorf("error reading resource pack chunk: %v", err)
 		}
+
+		conn.log.Println("handleResourcePackChunkRequest 2")
 		response.Data = response.Data[:n]
 
 		defer func() {
 			if !conn.packQueue.AllDownloaded() {
 				_ = conn.nextResourcePackDownload()
+				conn.log.Println("handleResourcePackChunkRequest 5")
 			} else {
 				conn.expect(packet.IDResourcePackClientResponse)
+
+				conn.log.Println("handleResourcePackChunkRequest 6")
 			}
 		}()
 	}
+
+	conn.log.Println("handleResourcePackChunkRequest 3")
 	if err := conn.WritePacket(response); err != nil {
 		conn.log.Printf("error writing resource pack chunk data packet: %v", err)
 		return fmt.Errorf("error writing resource pack chunk data packet: %v", err)
 	}
+
+	conn.log.Println("handleResourcePackChunkRequest 4")
 
 	return nil
 }
