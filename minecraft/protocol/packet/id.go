@@ -198,4 +198,10 @@ const (
 	IDGameTestResults
 	IDUpdateClientInputLocks
 	IDClientCheatAbility
+	IDCameraPresets
+	IDUnlockedRecipes
+	IDCameraInstruction = iota + 101
+	IDCompressedBiomeDefinitionList
+	IDTrimData
+	IDOpenSign
 )

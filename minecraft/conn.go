@@ -679,7 +679,7 @@ func (conn *Conn) handleRequestNetworkSettings(pk *packet.RequestNetworkSettings
 	conn.expect(packet.IDLogin)
 	if err := conn.WritePacket(&packet.NetworkSettings{
 		CompressionThreshold: 512,
-		CompressionAlgorithm: conn.compression,
+		CompressionAlgorithm: conn.compression.EncodeCompression(),
 	}); err != nil {
 		return fmt.Errorf("error sending network settings: %v", err)
 	}
@@ -691,8 +691,12 @@ func (conn *Conn) handleRequestNetworkSettings(pk *packet.RequestNetworkSettings
 
 // handleNetworkSettings handles an incoming NetworkSettings packet, enabling compression for future packets.
 func (conn *Conn) handleNetworkSettings(pk *packet.NetworkSettings) error {
-	conn.enc.EnableCompression(pk.CompressionAlgorithm)
-	conn.dec.EnableCompression(pk.CompressionAlgorithm)
+	alg, ok := packet.CompressionByID(pk.CompressionAlgorithm)
+	if !ok {
+		return fmt.Errorf("unknown compression algorithm: %v", pk.CompressionAlgorithm)
+	}
+	conn.enc.EnableCompression(alg)
+	conn.dec.EnableCompression(alg)
 	conn.readyToLogin = true
 	return nil
 }
@@ -1005,6 +1009,8 @@ func (conn *Conn) startGame() {
 		Dimension:                    data.Dimension,
 		WorldSpawn:                   data.WorldSpawn,
 		EditorWorld:                  data.EditorWorld,
+		CreatedInEditor:              data.CreatedInEditor,
+		ExportedFromEditor:           data.ExportedFromEditor,
 		PersonaDisabled:              data.PersonaDisabled,
 		CustomSkinsDisabled:          data.CustomSkinsDisabled,
 		GameRules:                    data.GameRules,
@@ -1201,6 +1207,8 @@ func (conn *Conn) handleStartGame(pk *packet.StartGame) error {
 		Dimension:                    pk.Dimension,
 		WorldSpawn:                   pk.WorldSpawn,
 		EditorWorld:                  pk.EditorWorld,
+		CreatedInEditor:              pk.CreatedInEditor,
+		ExportedFromEditor:           pk.ExportedFromEditor,
 		PersonaDisabled:              pk.PersonaDisabled,
 		CustomSkinsDisabled:          pk.CustomSkinsDisabled,
 		GameRules:                    pk.GameRules,
