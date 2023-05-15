@@ -1091,16 +1091,26 @@ func (conn *Conn) handleResourcePackDataInfo(pk *packet.ResourcePackDataInfo) er
 	idCopy := pk.UUID
 	go func() {
 		for i := uint32(0); i < chunkCount; i++ {
-			_ = conn.WritePacket(&packet.ResourcePackChunkRequest{
+			err := conn.WritePacket(&packet.ResourcePackChunkRequest{
 				UUID:       idCopy,
 				ChunkIndex: i,
 			})
+
+			if err != nil {
+				log.Printf("Error write Packet? :%v", err)
+			} else {
+				log.Printf("Write ResourcePack chunks")
+			}
 			select {
 			case <-conn.close:
 				return
 			case frag := <-pack.newFrag:
 				// Write the fragment to the full buffer of the downloading resource pack.
-				_, _ = pack.buf.Write(frag)
+				_, err := pack.buf.Write(frag)
+
+				if err != nil {
+					log.Printf("Error? :%v", err)
+				}
 			}
 		}
 		conn.packMu.Lock()
