@@ -1066,6 +1066,7 @@ func (conn *Conn) handleResourcePackDataInfo(pk *packet.ResourcePackDataInfo) er
 	if !ok {
 		// We either already downloaded the pack or we got sent an invalid UUID, that did not match any pack
 		// sent in the ResourcePacksInfo packet.
+		conn.log.Println("unknown pack to download with UUID ")
 		return fmt.Errorf("unknown pack to download with UUID %v", id)
 	}
 	if pack.size != pk.Size {
@@ -1218,6 +1219,7 @@ func (conn *Conn) handleResourcePackChunkRequest(pk *packet.ResourcePackChunkReq
 	}
 
 	conn.log.Println("handleResourcePackChunkRequest 4")
+	conn.log.Printf("testi")
 
 	return nil
 }
