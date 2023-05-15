@@ -944,7 +944,7 @@ func (conn *Conn) hasPack(uuid string, version string, hasBehaviours bool) bool 
 }
 
 // packChunkSize is the size of a single chunk of data from a resource pack: 512 kB or 0.5 MB
-const packChunkSize = 1024 * 128
+const packChunkSize = 1024 * 64 // may fix downloading packs for IOS Devices.
 
 // handleResourcePackClientResponse handles an incoming resource pack client response packet. The packet is
 // handled differently depending on the response.
