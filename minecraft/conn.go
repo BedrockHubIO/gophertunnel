@@ -1219,7 +1219,7 @@ func (conn *Conn) handleResourcePackChunkRequest(pk *packet.ResourcePackChunkReq
 	}
 
 	conn.log.Println("handleResourcePackChunkRequest 4")
-	conn.log.Printf("testi")
+	conn.log.Println("testi")
 
 	return nil
 }
