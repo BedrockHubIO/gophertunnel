@@ -21,15 +21,16 @@ type Reader struct {
 		io.Reader
 		io.ByteReader
 	}
-	shieldID int32
+	shieldID      int32
+	limitsEnabled bool
 }
 
 // NewReader creates a new Reader using the io.ByteReader passed as underlying source to read bytes from.
 func NewReader(r interface {
 	io.Reader
 	io.ByteReader
-}, shieldID int32) *Reader {
-	return &Reader{r: r, shieldID: shieldID}
+}, shieldID int32, enableLimits bool) *Reader {
+	return &Reader{r: r, shieldID: shieldID, limitsEnabled: enableLimits}
 }
 
 // Uint8 reads a uint8 from the underlying buffer.
@@ -379,7 +380,7 @@ func (r *Reader) ItemInstance(i *ItemInstance) {
 	r.ByteSlice(&extraData)
 
 	buf := bytes.NewBuffer(extraData)
-	bufReader := NewReader(buf, r.shieldID)
+	bufReader := NewReader(buf, r.shieldID, r.limitsEnabled)
 
 	var length int16
 	bufReader.Int16(&length)
@@ -427,7 +428,7 @@ func (r *Reader) Item(x *ItemStack) {
 	r.ByteSlice(&extraData)
 
 	buf := bytes.NewBuffer(extraData)
-	bufReader := NewReader(buf, r.shieldID)
+	bufReader := NewReader(buf, r.shieldID, r.limitsEnabled)
 
 	var length int16
 	bufReader.Int16(&length)
@@ -571,39 +572,6 @@ func (r *Reader) CompressedBiomeDefinitions(x *map[string]any) {
 	if err := nbt.Unmarshal(decompressed, x); err != nil {
 		r.panic(err)
 	}
-}
-
-// Commands reads a Command slice and its constraints from a reader.
-func (r *Reader) Commands(commands *[]Command, constraints *[]CommandEnumConstraint) {
-	var ctx AvailableCommandsContext
-
-	// First we read all the enum values and suffixes.
-	FuncSlice(r, &ctx.EnumValues, r.String)
-	FuncSlice(r, &ctx.Suffixes, r.String)
-
-	// After that we create all enums, which are composed of pointers to the enum values above.
-	FuncIOSlice(r, &ctx.Enums, ctx.Enum)
-
-	// We read all the commands, which will have their enums and suffixes set automatically. We don't yet set
-	// the dynamic enums as we haven't read them yet.
-	FuncIOSlice(r, commands, ctx.CommandData)
-
-	// We first read all soft enums of the packet.
-	Slice(r, &ctx.DynamicEnums)
-
-	// After we've read all soft enums, we need to match them with the values that are set in the commands
-	// that we read before.
-	for i, command := range *commands {
-		for j, overload := range command.Overloads {
-			for k, param := range overload.Parameters {
-				if param.Type&CommandArgSoftEnum != 0 {
-					(*commands)[i].Overloads[j].Parameters[k].Enum = ctx.DynamicEnums[param.Type&0xffff]
-				}
-			}
-		}
-	}
-
-	FuncIOSlice(r, constraints, ctx.EnumConstraint)
 }
 
 // LimitUint32 checks if the value passed is lower than the limit passed. If not, the Reader panics.

@@ -10,14 +10,13 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/sandertv/go-raknet"
-	"github.com/sandertv/gophertunnel/internal"
+	"github.com/sandertv/gophertunnel/minecraft/internal"
 	"github.com/sandertv/gophertunnel/minecraft/nbt"
 	"github.com/sandertv/gophertunnel/minecraft/protocol"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/login"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 	"github.com/sandertv/gophertunnel/minecraft/resource"
 	"github.com/sandertv/gophertunnel/minecraft/text"
-	"go.uber.org/atomic"
 	"gopkg.in/square/go-jose.v2"
 	"gopkg.in/square/go-jose.v2/jwt"
 	"io"
@@ -25,6 +24,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -63,6 +63,10 @@ type Conn struct {
 	enc           *packet.Encoder
 	dec           *packet.Decoder
 	compression   packet.Compression
+	readerLimits  bool
+
+	disconnectOnUnknownPacket bool
+	disconnectOnInvalidPacket bool
 
 	identityData login.IdentityData
 	clientData   login.ClientData
@@ -133,7 +137,7 @@ type Conn struct {
 	// to this connection will call this function.
 	packetFunc func(header packet.Header, payload []byte, src, dst net.Addr)
 
-	disconnectMessage atomic.String
+	disconnectMessage atomic.Pointer[string]
 
 	shieldID atomic.Int32
 
@@ -144,23 +148,32 @@ type Conn struct {
 // Minecraft packets to that net.Conn.
 // newConn accepts a private key which will be used to identify the connection. If a nil key is passed, the
 // key is generated.
-func newConn(netConn net.Conn, key *ecdsa.PrivateKey, log *log.Logger, proto Protocol, flushRate time.Duration) *Conn {
+func newConn(netConn net.Conn, key *ecdsa.PrivateKey, log *log.Logger, proto Protocol, flushRate time.Duration, limits bool) *Conn {
 	conn := &Conn{
-		enc:        packet.NewEncoder(netConn),
-		dec:        packet.NewDecoder(netConn),
-		salt:       make([]byte, 16),
-		packets:    make(chan *packetData, 8),
-		additional: make(chan packet.Packet, 16),
-		close:      make(chan struct{}),
-		spawn:      make(chan struct{}),
-		conn:       netConn,
-		privateKey: key,
-		log:        log,
-		hdr:        &packet.Header{},
-		proto:      proto,
+		enc:          packet.NewEncoder(netConn),
+		dec:          packet.NewDecoder(netConn),
+		salt:         make([]byte, 16),
+		packets:      make(chan *packetData, 8),
+		additional:   make(chan packet.Packet, 16),
+		close:        make(chan struct{}),
+		spawn:        make(chan struct{}),
+		conn:         netConn,
+		privateKey:   key,
+		log:          log,
+		hdr:          &packet.Header{},
+		proto:        proto,
+		readerLimits: limits,
 	}
-	conn.expectedIDs.Store([]uint32{packet.IDRequestNetworkSettings})
+	var s string
+	conn.disconnectMessage.Store(&s)
+
+	if !limits {
+		// Disable the batch packet limit so that the server can send packets as often as it wants to.
+		conn.dec.DisableBatchPacketLimit()
+	}
 	_, _ = rand.Read(conn.salt)
+
+	conn.expectedIDs.Store([]uint32{packet.IDRequestNetworkSettings})
 
 	if flushRate <= 0 {
 		return conn
@@ -319,7 +332,7 @@ func (conn *Conn) WritePacket(pk packet.Packet) error {
 	l := buf.Len()
 
 	for _, converted := range conn.proto.ConvertFromLatest(pk, conn) {
-		converted.Marshal(protocol.NewWriter(buf, conn.shieldID.Load()))
+		converted.Marshal(conn.proto.NewWriter(buf, conn.shieldID.Load()))
 
 		if conn.packetFunc != nil {
 			conn.packetFunc(*conn.hdr, buf.Bytes()[l:], conn.LocalAddr(), conn.RemoteAddr())
@@ -554,7 +567,7 @@ func (conn *Conn) receive(data []byte) error {
 		if err != nil {
 			return err
 		}
-		conn.disconnectMessage.Store(pks[0].(*packet.Disconnect).Message)
+		conn.disconnectMessage.Store(&pks[0].(*packet.Disconnect).Message)
 		_ = conn.Close()
 		return nil
 	}
@@ -661,7 +674,7 @@ func (conn *Conn) handleRequestNetworkSettings(pk *packet.RequestNetworkSettings
 	for _, pro := range conn.acceptedProto {
 		if pro.ID() == pk.ClientProtocol {
 			conn.proto = pro
-			conn.pool = pro.Packets()
+			conn.pool = pro.Packets(true)
 			found = true
 			break
 		}
@@ -966,7 +979,7 @@ func (conn *Conn) handleResourcePackClientResponse(pk *packet.ResourcePackClient
 			return err
 		}
 	case packet.PackResponseAllPacksDownloaded:
-		pk := &packet.ResourcePackStack{BaseGameVersion: protocol.CurrentVersion}
+		pk := &packet.ResourcePackStack{BaseGameVersion: protocol.CurrentVersion, Experiments: []protocol.ExperimentData{{Name: "cameras", Enabled: true}}}
 		for _, pack := range conn.resourcePacks {
 			resourcePack := protocol.StackResourcePack{UUID: pack.UUID(), Version: pack.Version()}
 			// If it has behaviours, add it to the behaviour pack list. If not, we add it to the texture packs
@@ -1035,6 +1048,7 @@ func (conn *Conn) startGame() {
 		DisablePlayerInteractions:    data.DisablePlayerInteractions,
 		BaseGameVersion:              data.BaseGameVersion,
 		GameVersion:                  protocol.CurrentVersion,
+		UseBlockNetworkIDHashes:      data.UseBlockNetworkIDHashes,
 	})
 	_ = conn.Flush()
 	conn.expect(packet.IDRequestChunkRadius, packet.IDSetLocalPlayerAsInitialised)
@@ -1224,6 +1238,7 @@ func (conn *Conn) handleStartGame(pk *packet.StartGame) error {
 		DisablePlayerInteractions:    pk.DisablePlayerInteractions,
 		ClientSideGeneration:         pk.ClientSideGeneration,
 		Experiments:                  pk.Experiments,
+		UseBlockNetworkIDHashes:      pk.UseBlockNetworkIDHashes,
 	}
 	for _, item := range pk.Items {
 		if item.Name == "minecraft:shield" {
@@ -1290,7 +1305,7 @@ func (conn *Conn) handleSetLocalPlayerAsInitialised(pk *packet.SetLocalPlayerAsI
 	if pk.EntityRuntimeID != conn.gameData.EntityRuntimeID {
 		return fmt.Errorf("entity runtime ID mismatch: entity runtime ID in StartGame and SetLocalPlayerAsInitialised packets should be equal")
 	}
-	if conn.waitingForSpawn.CAS(true, false) {
+	if conn.waitingForSpawn.CompareAndSwap(true, false) {
 		close(conn.spawn)
 	}
 	return nil
@@ -1346,8 +1361,8 @@ func (conn *Conn) handlePlayStatus(pk *packet.PlayStatus) error {
 // PlayStatus packets have been sent.
 func (conn *Conn) tryFinaliseClientConn() {
 	if conn.waitingForSpawn.Load() && conn.gameDataReceived.Load() {
-		conn.waitingForSpawn.Toggle()
-		conn.gameDataReceived.Toggle()
+		conn.waitingForSpawn.Store(false)
+		conn.gameDataReceived.Store(false)
 
 		close(conn.spawn)
 		conn.loggedIn = true
@@ -1395,7 +1410,7 @@ func (conn *Conn) expect(packetIDs ...uint32) {
 // closeErr returns an adequate connection closed error for the op passed. If the connection was closed
 // through a Disconnect packet, the message is contained.
 func (conn *Conn) closeErr(op string) error {
-	if msg := conn.disconnectMessage.Load(); msg != "" {
+	if msg := *conn.disconnectMessage.Load(); msg != "" {
 		return conn.wrap(DisconnectError(msg), op)
 	}
 	return conn.wrap(errClosed, op)
