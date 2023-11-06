@@ -65,8 +65,8 @@ func ReadURL(url string) (*Pack, error) {
 	return pack, nil
 }
 
-func AddPackURL(url string) (*Pack, error) {
-	return &Pack{downloadURL: url}, nil
+func AddPackURL(url string, manifest *Manifest) (*Pack, error) {
+	return &Pack{downloadURL: url, manifest: manifest}, nil
 }
 
 // MustReadPath compiles a resource pack found at the path passed. The resource pack must either be a zip
