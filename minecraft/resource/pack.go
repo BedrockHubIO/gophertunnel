@@ -66,15 +66,6 @@ func ReadURL(url string) (*Pack, error) {
 }
 
 func AddPackURL(url string) (*Pack, error) {
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("error downloading resource pack: %v", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("error downloading resource pack: %v (%d)", resp.Status, resp.StatusCode)
-	}
-
 	return &Pack{downloadURL: url}, nil
 }
 
