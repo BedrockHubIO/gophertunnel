@@ -65,6 +65,19 @@ func ReadURL(url string) (*Pack, error) {
 	return pack, nil
 }
 
+func AddPackURL(url string) (*Pack, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("error downloading resource pack: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("error downloading resource pack: %v (%d)", resp.Status, resp.StatusCode)
+	}
+
+	return &Pack{downloadURL: url}, nil
+}
+
 // MustReadPath compiles a resource pack found at the path passed. The resource pack must either be a zip
 // archive (extension does not matter, could be .zip or .mcpack), or a directory containing a resource pack.
 // In the case of a directory, the directory is compiled into an archive and the pack is parsed from that.
