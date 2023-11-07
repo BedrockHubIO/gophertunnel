@@ -752,26 +752,25 @@ func (conn *Conn) handleClientToServerHandshake() error {
 				UUIDVersion: fmt.Sprintf("%s_%s", pack.UUID(), pack.Version()),
 				URL:         pack.DownloadURL(),
 			})
-		} else {
-			// If it has behaviours, add it to the behaviour pack list. If not, we add it to the texture packs
-			// list.
-			if pack.HasBehaviours() {
-				behaviourPack := protocol.BehaviourPackInfo{UUID: pack.UUID(), Version: pack.Version(), Size: uint64(pack.Len())}
-				if pack.HasScripts() {
-					// One of the resource packs has scripts, so we set HasScripts in the packet to true.
-					pk.HasScripts = true
-					behaviourPack.HasScripts = true
-				}
-				pk.BehaviourPacks = append(pk.BehaviourPacks, behaviourPack)
-				continue
-			}
-			texturePack := protocol.TexturePackInfo{UUID: pack.UUID(), Version: pack.Version(), Size: uint64(pack.Len())}
-			if pack.Encrypted() {
-				texturePack.ContentKey = pack.ContentKey()
-				texturePack.ContentIdentity = pack.Manifest().Header.UUID
-			}
-			pk.TexturePacks = append(pk.TexturePacks, texturePack)
 		}
+		// If it has behaviours, add it to the behaviour pack list. If not, we add it to the texture packs
+		// list.
+		if pack.HasBehaviours() {
+			behaviourPack := protocol.BehaviourPackInfo{UUID: pack.UUID(), Version: pack.Version(), Size: uint64(pack.Len())}
+			if pack.HasScripts() {
+				// One of the resource packs has scripts, so we set HasScripts in the packet to true.
+				pk.HasScripts = true
+				behaviourPack.HasScripts = true
+			}
+			pk.BehaviourPacks = append(pk.BehaviourPacks, behaviourPack)
+			continue
+		}
+		texturePack := protocol.TexturePackInfo{UUID: pack.UUID(), Version: pack.Version(), Size: uint64(pack.Len())}
+		if pack.Encrypted() {
+			texturePack.ContentKey = pack.ContentKey()
+			texturePack.ContentIdentity = pack.Manifest().Header.UUID
+		}
+		pk.TexturePacks = append(pk.TexturePacks, texturePack)
 	}
 	// Finally we send the packet after the play status.
 	if err := conn.WritePacket(pk); err != nil {
