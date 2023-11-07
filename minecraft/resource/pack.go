@@ -31,6 +31,8 @@ type Pack struct {
 	// If nothing is encrypted, this field can be left as an empty string.
 	contentKey string
 
+	Size int
+
 	// checksum is the SHA256 checksum of the full content of the file. It is sent to the client so that it
 	// can 'verify' the download.
 	checksum [32]byte
@@ -66,7 +68,28 @@ func ReadURL(url string) (*Pack, error) {
 }
 
 func AddPackURL(url string, manifest *Manifest) (*Pack, error) {
-	return &Pack{downloadURL: url, manifest: manifest}, nil
+	client := &http.Client{}
+
+	resp, err := client.Get(url)
+	if err != nil {
+		panic(err)
+	}
+
+	defer resp.Body.Close()
+
+	if err != nil {
+		panic(err)
+	}
+
+	contentLength := resp.Header.Get("Content-Length")
+
+	if contentLength == "" {
+		panic("content lenght is missing")
+	}
+
+	length, _ := strconv.ParseInt(contentLength, 10, 64)
+
+	return &Pack{downloadURL: url, manifest: manifest, Size: int(length)}, nil
 }
 
 // MustReadPath compiles a resource pack found at the path passed. The resource pack must either be a zip
@@ -203,6 +226,10 @@ func (pack *Pack) Checksum() [32]byte {
 
 // Len returns the total length in bytes of the content of the archive that contained the resource pack.
 func (pack *Pack) Len() int {
+	if pack.DownloadURL() != "" {
+		return pack.Size
+	}
+
 	return pack.content.Len()
 }
 
