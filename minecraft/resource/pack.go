@@ -67,29 +67,8 @@ func ReadURL(url string) (*Pack, error) {
 	return pack, nil
 }
 
-func AddPackURL(url string, manifest *Manifest) (*Pack, error) {
-	client := &http.Client{}
-
-	resp, err := client.Get(url)
-	if err != nil {
-		panic(err)
-	}
-
-	defer resp.Body.Close()
-
-	if err != nil {
-		panic(err)
-	}
-
-	contentLength := resp.Header.Get("Content-Length")
-
-	if contentLength == "" {
-		panic("content lenght is missing")
-	}
-
-	length, _ := strconv.ParseInt(contentLength, 10, 64)
-
-	return &Pack{downloadURL: url, manifest: manifest, Size: int(length)}, nil
+func AddPackURL(url string, manifest *Manifest, length int) (*Pack, error) {
+	return &Pack{downloadURL: url, manifest: manifest, Size: length}, nil
 }
 
 // MustReadPath compiles a resource pack found at the path passed. The resource pack must either be a zip
