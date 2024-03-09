@@ -1178,6 +1178,11 @@ func (conn *Conn) handleResourcePackChunkRequest(pk *packet.ResourcePackChunkReq
 	if conn.packQueue.currentOffset != uint64(pk.ChunkIndex)*packChunkSize {
 		return fmt.Errorf("resource pack chunk request had unexpected chunk index: expected %v, but got %v", conn.packQueue.currentOffset/packChunkSize, pk.ChunkIndex)
 	}
+
+	println("PK:UUID", pk.UUID)
+	println("CURRENT:UUID:", current.UUID())
+
+
 	response := &packet.ResourcePackChunkData{
 		UUID:       pk.UUID,
 		ChunkIndex: pk.ChunkIndex,
