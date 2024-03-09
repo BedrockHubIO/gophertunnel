@@ -1,14 +1,17 @@
 package packet
 
 import (
-	"github.com/sandertv/gophertunnel/minecraft/nbt"
 	"github.com/sandertv/gophertunnel/minecraft/protocol"
 )
 
 // CameraInstruction gives a custom camera specific instructions to operate.
 type CameraInstruction struct {
-	// Data is a compound tag of the instructions to sent. The structure of this tag is currently unknown.
-	Data map[string]any
+	// Set is a camera instruction that sets the camera to a specified preset.
+	Set protocol.Optional[protocol.CameraInstructionSet]
+	// Clear can be set to true to clear all the current camera instructions.
+	Clear protocol.Optional[bool]
+	// Fade is a camera instruction that fades the screen to a specified colour.
+	Fade protocol.Optional[protocol.CameraInstructionFade]
 }
 
 // ID ...
@@ -17,5 +20,7 @@ func (*CameraInstruction) ID() uint32 {
 }
 
 func (pk *CameraInstruction) Marshal(io protocol.IO) {
-	io.NBT(&pk.Data, nbt.NetworkLittleEndian)
+	protocol.OptionalMarshaler(io, &pk.Set)
+	protocol.OptionalFunc(io, &pk.Clear, io.Bool)
+	protocol.OptionalMarshaler(io, &pk.Fade)
 }

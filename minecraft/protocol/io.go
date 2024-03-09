@@ -41,6 +41,7 @@ type IO interface {
 	NBT(m *map[string]any, encoding nbt.Encoding)
 	NBTList(m *[]any, encoding nbt.Encoding)
 	UUID(x *uuid.UUID)
+	RGB(x *color.RGBA)
 	RGBA(x *color.RGBA)
 	VarRGBA(x *color.RGBA)
 	EntityMetadata(x *map[uint32]any)
@@ -209,6 +210,15 @@ func OptionalFunc[T any](r IO, x *Optional[T], f func(*T)) any {
 	r.Bool(&x.set)
 	if x.set {
 		f(&x.val)
+	}
+	return x
+}
+
+// OptionalFuncIO reads/writes an Optional[T].
+func OptionalFuncIO[T any](r IO, x *Optional[T], f func(IO, *T)) any {
+	r.Bool(&x.set)
+	if x.set {
+		f(r, &x.val)
 	}
 	return x
 }

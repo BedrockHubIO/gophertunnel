@@ -8,6 +8,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"github.com/go-jose/go-jose/v3"
+	"github.com/go-jose/go-jose/v3/jwt"
 	"github.com/google/uuid"
 	"github.com/sandertv/go-raknet"
 	"github.com/sandertv/gophertunnel/minecraft/internal"
@@ -17,8 +19,6 @@ import (
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 	"github.com/sandertv/gophertunnel/minecraft/resource"
 	"github.com/sandertv/gophertunnel/minecraft/text"
-	"gopkg.in/square/go-jose.v2"
-	"gopkg.in/square/go-jose.v2/jwt"
 	"io"
 	"log"
 	"net"
@@ -487,12 +487,11 @@ func (conn *Conn) SetDeadline(t time.Time) error {
 // SetReadDeadline sets the read deadline of the Conn to the time passed. The time must be after time.Now().
 // Passing an empty time.Time to the method (time.Time{}) results in the read deadline being cleared.
 func (conn *Conn) SetReadDeadline(t time.Time) error {
-	if t.Before(time.Now()) {
-		panic(fmt.Errorf("error setting read deadline: time passed is before time.Now()"))
-	}
 	empty := time.Time{}
 	if t == empty {
 		conn.readDeadline = make(chan time.Time)
+	} else if t.Before(time.Now()) {
+		panic(fmt.Errorf("error setting read deadline: time passed is before time.Now()"))
 	} else {
 		conn.readDeadline = time.After(time.Until(t))
 	}
@@ -698,7 +697,7 @@ func (conn *Conn) handleRequestNetworkSettings(pk *packet.RequestNetworkSettings
 	}
 	_ = conn.Flush()
 	conn.enc.EnableCompression(conn.compression)
-	conn.dec.EnableCompression(conn.compression)
+	conn.dec.EnableCompression()
 	return nil
 }
 
@@ -709,7 +708,7 @@ func (conn *Conn) handleNetworkSettings(pk *packet.NetworkSettings) error {
 		return fmt.Errorf("unknown compression algorithm: %v", pk.CompressionAlgorithm)
 	}
 	conn.enc.EnableCompression(alg)
-	conn.dec.EnableCompression(alg)
+	conn.dec.EnableCompression()
 	conn.readyToLogin = true
 	return nil
 }
@@ -748,6 +747,12 @@ func (conn *Conn) handleClientToServerHandshake() error {
 	}
 	pk := &packet.ResourcePacksInfo{TexturePackRequired: conn.texturePacksRequired}
 	for _, pack := range conn.resourcePacks {
+		if pack.DownloadURL() != "" {
+			pk.PackURLs = append(pk.PackURLs, protocol.PackURL{
+				UUIDVersion: fmt.Sprintf("%s_%s", pack.UUID(), pack.Version()),
+				URL:         pack.DownloadURL(),
+			})
+		}
 		// If it has behaviours, add it to the behaviour pack list. If not, we add it to the texture packs
 		// list.
 		if pack.HasBehaviours() {
@@ -1021,7 +1026,7 @@ func (conn *Conn) startGame() {
 		WorldSeed:                    data.WorldSeed,
 		Dimension:                    data.Dimension,
 		WorldSpawn:                   data.WorldSpawn,
-		EditorWorld:                  data.EditorWorld,
+		EditorWorldType:              data.EditorWorldType,
 		CreatedInEditor:              data.CreatedInEditor,
 		ExportedFromEditor:           data.ExportedFromEditor,
 		PersonaDisabled:              data.PersonaDisabled,
@@ -1123,7 +1128,7 @@ func (conn *Conn) handleResourcePackDataInfo(pk *packet.ResourcePackDataInfo) er
 			return
 		}
 		// First parse the resource pack from the total byte buffer we obtained.
-		newPack, err := resource.FromBytes(pack.buf.Bytes())
+		newPack, err := resource.Read(pack.buf)
 		if err != nil {
 			conn.log.Printf("invalid full resource pack data for UUID %v: %v\n", id, err)
 			return
@@ -1220,7 +1225,7 @@ func (conn *Conn) handleStartGame(pk *packet.StartGame) error {
 		Yaw:                          pk.Yaw,
 		Dimension:                    pk.Dimension,
 		WorldSpawn:                   pk.WorldSpawn,
-		EditorWorld:                  pk.EditorWorld,
+		EditorWorldType:              pk.EditorWorldType,
 		CreatedInEditor:              pk.CreatedInEditor,
 		ExportedFromEditor:           pk.ExportedFromEditor,
 		PersonaDisabled:              pk.PersonaDisabled,
