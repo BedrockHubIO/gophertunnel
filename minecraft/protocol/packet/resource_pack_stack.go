@@ -27,6 +27,7 @@ type ResourcePackStack struct {
 	// ExperimentsPreviouslyToggled specifies if any experiments were previously toggled in this world. It is
 	// probably used for some kind of metrics.
 	ExperimentsPreviouslyToggled bool
+	HasEditorPacks               bool
 }
 
 // ID ...
@@ -41,4 +42,5 @@ func (pk *ResourcePackStack) Marshal(io protocol.IO) {
 	io.String(&pk.BaseGameVersion)
 	protocol.SliceUint32Length(io, &pk.Experiments)
 	io.Bool(&pk.ExperimentsPreviouslyToggled)
+	io.Bool(&pk.HasEditorPacks)
 }
