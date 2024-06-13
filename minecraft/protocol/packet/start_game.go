@@ -316,6 +316,9 @@ func (pk *StartGame) Marshal(io protocol.IO) {
 	protocol.OptionalFunc(io, &pk.ForceExperimentalGameplay, io.Bool)
 	io.Uint8(&pk.ChatRestrictionLevel)
 	io.Bool(&pk.DisablePlayerInteractions)
+	io.String(&pk.ServerId)
+	io.String(&pk.WorldId)
+	io.String(&pk.ScenarioId)
 	io.String(&pk.LevelID)
 	io.String(&pk.WorldName)
 	io.String(&pk.TemplateContentIdentity)
@@ -334,7 +337,4 @@ func (pk *StartGame) Marshal(io protocol.IO) {
 	io.Bool(&pk.ClientSideGeneration)
 	io.Bool(&pk.UseBlockNetworkIDHashes)
 	io.Bool(&pk.ServerAuthoritativeSound)
-	io.String(&pk.ServerId)
-	io.String(&pk.WorldId)
-	io.String(&pk.ScenarioId)
 }
