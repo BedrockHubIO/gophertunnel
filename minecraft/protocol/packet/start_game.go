@@ -247,6 +247,10 @@ type StartGame struct {
 	UseBlockNetworkIDHashes bool
 	// ServerAuthoritativeSound is currently unknown as to what it does.
 	ServerAuthoritativeSound bool
+
+	ServerId   string
+	WorldId    string
+	ScenarioId string
 }
 
 // ID ...
@@ -330,4 +334,7 @@ func (pk *StartGame) Marshal(io protocol.IO) {
 	io.Bool(&pk.ClientSideGeneration)
 	io.Bool(&pk.UseBlockNetworkIDHashes)
 	io.Bool(&pk.ServerAuthoritativeSound)
+	io.String(&pk.ServerId)
+	io.String(&pk.WorldId)
+	io.String(&pk.ScenarioId)
 }
