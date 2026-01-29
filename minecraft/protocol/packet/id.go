@@ -20,7 +20,7 @@ const (
 	IDTakeItemActor
 	IDMoveActorAbsolute
 	IDMovePlayer
-	IDPassengerJump
+	_
 	IDUpdateBlock
 	IDAddPainting
 	_
@@ -57,7 +57,7 @@ const (
 	IDGUIDataPickItem
 	IDAdventureSettings
 	IDBlockActorData
-	IDPlayerInput
+	_
 	IDLevelChunk
 	IDSetCommandsEnabled
 	IDSetDifficulty
@@ -201,7 +201,7 @@ const (
 	IDCameraPresets
 	IDUnlockedRecipes
 	IDCameraInstruction = iota + 101
-	IDCompressedBiomeDefinitionList
+	_
 	IDTrimData
 	IDOpenSign
 	IDAgentAnimation
@@ -219,11 +219,18 @@ const (
 	IDCameraAimAssist
 	IDContainerRegistryCleanup
 	IDMovementEffect
-	IDSetMovementAuthority
+	_
 	IDCameraAimAssistPresets
 	IDClientCameraAimAssist
 	IDClientMovementPredictionSync
 	IDUpdateClientOptions
 	IDPlayerVideoCapture
 	IDPlayerUpdateEntityOverrides
+	IDPlayerLocation
+	IDClientBoundControlSchemeSet
+	IDDebugDrawer
+	IDServerBoundPackSettingChange
+	_ // TODO: Implement client-bound data store
+	IDGraphicsOverrideParameter
+	_ // TODO: Implement server-bound data store
 )

@@ -36,6 +36,8 @@ type GameData struct {
 	PersonaDisabled bool
 	// CustomSkinsDisabled is true if custom skins are disabled for the current game session.
 	CustomSkinsDisabled bool
+	// EmoteChatMuted is true if players will not be sent a chat message when using certain emotes.
+	EmoteChatMuted bool
 	// BaseGameVersion is the version of the game from which Vanilla features will be used. The exact function
 	// of this field isn't clear.
 	BaseGameVersion string
@@ -108,4 +110,9 @@ type GameData struct {
 	// its index in the expected block palette. This is useful for servers that wish to support multiple protocol versions
 	// and custom blocks, but it will result in extra bytes being written for every block in a sub chunk palette.
 	UseBlockNetworkIDHashes bool
+	// PropertyData contains properties that should be applied on the player. These properties are the same as the
+	// ones that are sent in the SyncActorProperty packet. This allows you to set custom properties on players,
+	// such as gophertunnel:example or gophertunnel:custom_property, which can be used by resource packs
+	// to change skins, models, or other player behaviors at runtime.
+	PropertyData map[string]any
 }

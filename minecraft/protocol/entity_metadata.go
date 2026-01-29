@@ -49,7 +49,7 @@ const (
 	EntityDataKeyContainerSize
 	EntityDataKeyContainerStrengthModifier
 	EntityDataKeyBlockTarget
-	EntityDataKeyInventory
+	EntityDataKeyInvulnerableTicks
 	EntityDataKeyTargetA
 	EntityDataKeyTargetB
 	EntityDataKeyTargetC
@@ -133,6 +133,10 @@ const (
 	EntityDataKeyPlayerHasDied
 	EntityDataKeyCollisionBox
 	EntityDataKeyVisibleMobEffects
+	EntityDataKeyFilteredName
+	EntityDataKeyEnterBedPosition
+	EntityDataKeySeatThirdPersonCameraRadius
+	EntityDataKeySeatCameraRelaxDistanceSmoothing
 )
 
 const (
@@ -259,6 +263,11 @@ const (
 	EntityDataFlagBodyRotationAxisAligned
 	EntityDataFlagCollidable
 	EntityDataFlagWASDAirControlled
+	EntityDataFlagDoesServerAuthOnlyDismount
+	EntityDataFlagBodyRotationAlwaysFollowsHead
+	EntityDataFlagCanUseVerticalMovementAction
+	EntityDataFlagRotationLockedToVehicle
+	EntityDataFlagCount
 )
 
 const (

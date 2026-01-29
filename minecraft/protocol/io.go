@@ -1,10 +1,11 @@
 package protocol
 
 import (
+	"image/color"
+
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/google/uuid"
 	"github.com/sandertv/gophertunnel/minecraft/nbt"
-	"image/color"
 )
 
 // IO represents a packet IO direction. Implementations of this interface are Reader and Writer. Reader reads
@@ -43,6 +44,8 @@ type IO interface {
 	UUID(x *uuid.UUID)
 	RGB(x *color.RGBA)
 	RGBA(x *color.RGBA)
+	ARGB(x *color.RGBA)
+	BEARGB(x *color.RGBA)
 	VarRGBA(x *color.RGBA)
 	EntityMetadata(x *map[uint32]any)
 	Item(x *ItemStack)
@@ -52,12 +55,16 @@ type IO interface {
 	MaterialReducer(x *MaterialReducer)
 	Recipe(x *Recipe)
 	EventType(x *Event)
+	EventOrdinal(x *Event)
 	TransactionDataType(x *InventoryTransactionData)
 	PlayerInventoryAction(x *UseItemTransactionData)
 	GameRule(x *GameRule)
+	GameRuleLegacy(x *GameRule)
 	AbilityValue(x *any)
-	CompressedBiomeDefinitions(x *map[string]any)
 	Bitset(x *Bitset, size int)
+	PackSetting(x *PackSetting)
+	ShapeData(x *ShapeData)
+	StringConst(x string)
 
 	ShieldID() int32
 	UnknownEnumOption(value any, enum string)

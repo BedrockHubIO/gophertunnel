@@ -3,11 +3,13 @@ package packet
 import (
 	"bytes"
 	"fmt"
-	"github.com/golang/snappy"
-	"github.com/klauspost/compress/flate"
-	"github.com/sandertv/gophertunnel/minecraft/internal"
 	"io"
+	"math"
 	"sync"
+
+	"github.com/klauspost/compress/flate"
+	"github.com/klauspost/compress/snappy"
+	"github.com/sandertv/gophertunnel/minecraft/internal"
 )
 
 // Compression represents a compression algorithm that can compress and decompress data.
@@ -17,7 +19,7 @@ type Compression interface {
 	// Compress compresses the given data and returns the compressed data.
 	Compress(decompressed []byte) ([]byte, error)
 	// Decompress decompresses the given data and returns the decompressed data.
-	Decompress(compressed []byte) ([]byte, error)
+	Decompress(compressed []byte, limit int) ([]byte, error)
 }
 
 var (
@@ -67,7 +69,10 @@ func (nopCompression) Compress(decompressed []byte) ([]byte, error) {
 }
 
 // Decompress ...
-func (nopCompression) Decompress(compressed []byte) ([]byte, error) {
+func (nopCompression) Decompress(compressed []byte, limit int) ([]byte, error) {
+	if len(compressed) > limit {
+		return nil, fmt.Errorf("nop decompression: size %d exceeds limit %d", len(compressed), limit)
+	}
 	return compressed, nil
 }
 
@@ -89,35 +94,60 @@ func (flateCompression) Compress(decompressed []byte) ([]byte, error) {
 	}()
 
 	w.Reset(compressed)
-
-	_, err := w.Write(decompressed)
-	if err != nil {
+	if _, err := w.Write(decompressed); err != nil {
 		return nil, fmt.Errorf("compress flate: %w", err)
 	}
-	err = w.Close()
-	if err != nil {
+	if err := w.Close(); err != nil {
 		return nil, fmt.Errorf("close flate writer: %w", err)
 	}
 	return append([]byte(nil), compressed.Bytes()...), nil
 }
 
 // Decompress ...
-func (flateCompression) Decompress(compressed []byte) ([]byte, error) {
-	buf := bytes.NewReader(compressed)
-	c := flateDecompressPool.Get().(io.ReadCloser)
-	defer flateDecompressPool.Put(c)
+func (flateCompression) Decompress(compressed []byte, limit int) ([]byte, error) {
+	r := flateDecompressPool.Get().(io.ReadCloser)
+	defer func() {
+		_ = r.Close()
+		flateDecompressPool.Put(r)
+	}()
 
-	if err := c.(flate.Resetter).Reset(buf, nil); err != nil {
+	if err := r.(flate.Resetter).Reset(bytes.NewReader(compressed), nil); err != nil {
 		return nil, fmt.Errorf("reset flate: %w", err)
 	}
-	_ = c.Close()
 
-	// Guess an uncompressed size of 2*len(compressed).
-	decompressed := bytes.NewBuffer(make([]byte, 0, len(compressed)*2))
-	if _, err := io.Copy(decompressed, c); err != nil {
+	decompressed := internal.BufferPool.Get().(*bytes.Buffer)
+	defer func() {
+		// Only return reasonably sized buffers to the pool to avoid retaining very large arrays.
+		if decompressed.Cap() <= 1<<20 { // 1 MiB cap
+			decompressed.Reset()
+			internal.BufferPool.Put(decompressed)
+		}
+	}()
+
+	// Handle no limit
+	if limit == math.MaxInt {
+		if _, err := io.Copy(decompressed, r); err != nil {
+			return nil, fmt.Errorf("decompress flate: %w", err)
+		}
+		return append([]byte(nil), decompressed.Bytes()...), nil
+	}
+
+	// If the compressed data is less than half the limit, we can safely assume l*2, otherwise cap at limit.
+	capHint := limit
+	if l := len(compressed); l <= limit/2 {
+		capHint = l * 2
+	}
+	decompressed.Grow(capHint)
+
+	// Read limit+1 bytes to detect overflow
+	lr := &io.LimitedReader{R: r, N: int64(limit) + 1}
+	if _, err := io.Copy(decompressed, lr); err != nil {
 		return nil, fmt.Errorf("decompress flate: %w", err)
 	}
-	return decompressed.Bytes(), nil
+	if lr.N <= 0 {
+		return nil, fmt.Errorf("decompress flate: size exceeds limit %d", limit)
+	}
+	return append([]byte(nil), decompressed.Bytes()...), nil
 }
 
 // EncodeCompression ...
@@ -135,10 +165,17 @@ func (snappyCompression) Compress(decompressed []byte) ([]byte, error) {
 }
 
 // Decompress ...
-func (snappyCompression) Decompress(compressed []byte) ([]byte, error) {
+func (snappyCompression) Decompress(compressed []byte, limit int) ([]byte, error) {
 	// Snappy writes a decoded data length prefix, so it can allocate the
 	// perfect size right away and only needs to allocate once. No need to pool
 	// byte slices here either.
+	decodedLen, err := snappy.DecodedLen(compressed)
+	if err != nil {
+		return nil, fmt.Errorf("snappy decoded length: %w", err)
+	}
+	if decodedLen > limit {
+		return nil, fmt.Errorf("snappy decoded size %d exceeds limit %d", decodedLen, limit)
+	}
 	decompressed, err := snappy.Decode(nil, compressed)
 	if err != nil {
 		return nil, fmt.Errorf("decompress snappy: %w", err)

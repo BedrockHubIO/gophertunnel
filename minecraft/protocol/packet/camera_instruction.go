@@ -16,6 +16,14 @@ type CameraInstruction struct {
 	Target protocol.Optional[protocol.CameraInstructionTarget]
 	// RemoveTarget can be set to true to remove the current aim assist target.
 	RemoveTarget protocol.Optional[bool]
+	// FieldOfView is a camera instruction that updates the field of view for the camera.
+	FieldOfView protocol.Optional[protocol.CameraInstructionFieldOfView]
+	// Spline is a camera instruction that creates a spline path for the camera to follow.
+	Spline protocol.Optional[protocol.CameraSplineInstruction]
+	// AttachToEntity is the entity ID to attach the camera to.
+	AttachToEntity protocol.Optional[int64]
+	// DetachFromEntity can be set to true to detach the camera from the current entity.
+	DetachFromEntity protocol.Optional[bool]
 }
 
 // ID ...
@@ -29,4 +37,8 @@ func (pk *CameraInstruction) Marshal(io protocol.IO) {
 	protocol.OptionalMarshaler(io, &pk.Fade)
 	protocol.OptionalMarshaler(io, &pk.Target)
 	protocol.OptionalFunc(io, &pk.RemoveTarget, io.Bool)
+	protocol.OptionalMarshaler(io, &pk.FieldOfView)
+	protocol.OptionalMarshaler(io, &pk.Spline)
+	protocol.OptionalFunc(io, &pk.AttachToEntity, io.Int64)
+	protocol.OptionalFunc(io, &pk.DetachFromEntity, io.Bool)
 }

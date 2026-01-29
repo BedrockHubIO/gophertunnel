@@ -4,15 +4,17 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/go-gl/mathgl/mgl32"
-	"github.com/google/uuid"
-	"github.com/sandertv/gophertunnel/minecraft/nbt"
 	"image/color"
 	"io"
 	"math"
 	"math/big"
 	"math/bits"
+	"strings"
 	"unsafe"
+
+	"github.com/go-gl/mathgl/mgl32"
+	"github.com/google/uuid"
+	"github.com/sandertv/gophertunnel/minecraft/nbt"
 )
 
 // Reader implements reading operations for reading types from Minecraft packets. Each Packet implementation
@@ -189,6 +191,30 @@ func (r *Reader) RGBA(x *color.RGBA) {
 	}
 }
 
+// ARGB reads a color.ARGB x from a int32.
+func (r *Reader) ARGB(x *color.RGBA) {
+	var v int32
+	r.Int32(&v)
+	*x = color.RGBA{
+		A: byte(v),
+		R: byte(v >> 8),
+		G: byte(v >> 16),
+		B: byte(v >> 24),
+	}
+}
+
+// BEARGB reads a color.ARGB x from a big endian int32.
+func (r *Reader) BEARGB(x *color.RGBA) {
+	var v int32
+	r.BEInt32(&v)
+	*x = color.RGBA{
+		A: byte(v),
+		R: byte(v >> 8),
+		G: byte(v >> 16),
+		B: byte(v >> 24),
+	}
+}
+
 // VarRGBA reads a color.RGBA x from a varuint32.
 func (r *Reader) VarRGBA(x *color.RGBA) {
 	var v uint32
@@ -215,7 +241,6 @@ func (r *Reader) NBT(m *map[string]any, encoding nbt.Encoding) {
 	dec := nbt.NewDecoderWithEncoding(r.r, encoding)
 	dec.AllowZero = true
 
-	*m = make(map[string]any)
 	if err := dec.Decode(m); err != nil {
 		r.panic(err)
 	}
@@ -230,19 +255,20 @@ func (r *Reader) NBTList(m *[]any, encoding nbt.Encoding) {
 
 // UUID reads a uuid.UUID from the underlying buffer.
 func (r *Reader) UUID(x *uuid.UUID) {
-	b := make([]byte, 16)
-	if _, err := r.r.Read(b); err != nil {
+	var b [16]byte
+	if _, err := io.ReadFull(r.r, b[:]); err != nil {
 		r.panic(err)
 	}
 
 	// The UUIDs we read are Little Endian, but the uuid library is based on Big Endian UUIDs, so we need to
-	// reverse the two int64s the UUID is composed of, then reverse their bytes too.
-	b = append(b[8:], b[:8]...)
-	var arr [16]byte
-	for i, j := 0, 15; i < j; i, j = i+1, j-1 {
-		arr[i], arr[j] = b[j], b[i]
+	// reverse the bytes of the two int64s the UUID is composed of.
+	for i, j := 0, 7; i < j; i, j = i+1, j-1 {
+		b[i], b[j] = b[j], b[i]
 	}
-	*x = arr
+	for i, j := 8, 15; i < j; i, j = i+1, j-1 {
+		b[i], b[j] = b[j], b[i]
+	}
+	*x = b
 }
 
 // PlayerInventoryAction reads a PlayerInventoryAction.
@@ -254,7 +280,7 @@ func (r *Reader) PlayerInventoryAction(x *UseItemTransactionData) {
 	Slice(r, &x.Actions)
 	r.Varuint32(&x.ActionType)
 	r.Varuint32(&x.TriggerType)
-	r.BlockPos(&x.BlockPosition)
+	r.UBlockPos(&x.BlockPosition)
 	r.Varint32(&x.BlockFace)
 	r.Varint32(&x.HotBarSlot)
 	r.ItemInstance(&x.HeldItem)
@@ -266,6 +292,31 @@ func (r *Reader) PlayerInventoryAction(x *UseItemTransactionData) {
 
 // GameRule reads a GameRule x from the Reader.
 func (r *Reader) GameRule(x *GameRule) {
+	r.String(&x.Name)
+	r.Bool(&x.CanBeModifiedByPlayer)
+	var t uint32
+	r.Varuint32(&t)
+
+	switch t {
+	case 1:
+		var v bool
+		r.Bool(&v)
+		x.Value = v
+	case 2:
+		var v uint32
+		r.Uint32(&v)
+		x.Value = v
+	case 3:
+		var v float32
+		r.Float32(&v)
+		x.Value = v
+	default:
+		r.UnknownEnumOption(t, "game rule type")
+	}
+}
+
+// GameRuleLegacy reads a legacy GameRule x from the Reader.
+func (r *Reader) GameRuleLegacy(x *GameRule) {
 	r.String(&x.Name)
 	r.Bool(&x.CanBeModifiedByPlayer)
 	var t uint32
@@ -372,12 +423,12 @@ func (r *Reader) ItemDescriptorCount(i *ItemDescriptorCount) {
 // ItemInstance reads an ItemInstance i from the underlying buffer.
 func (r *Reader) ItemInstance(i *ItemInstance) {
 	x := &i.Stack
-	x.NBTData = make(map[string]any)
 	r.Varint32(&x.NetworkID)
 	if x.NetworkID == 0 {
 		// The item was air, so there is no more data we should read for the item instance. After all, air
 		// items aren't really anything.
-		x.MetadataValue, x.Count, x.CanBePlacedOn, x.CanBreak = 0, 0, nil, nil
+		x.MetadataValue, x.Count, x.BlockRuntimeID, i.StackNetworkID = 0, 0, 0, 0
+		x.NBTData, x.CanBePlacedOn, x.CanBreak = nil, nil, nil
 		return
 	}
 
@@ -389,6 +440,8 @@ func (r *Reader) ItemInstance(i *ItemInstance) {
 
 	if hasNetID {
 		r.Varint32(&i.StackNetworkID)
+	} else {
+		i.StackNetworkID = 0
 	}
 
 	r.Varint32(&x.BlockRuntimeID)
@@ -415,6 +468,8 @@ func (r *Reader) ItemInstance(i *ItemInstance) {
 		}
 	} else if length > 0 {
 		bufReader.NBT(&x.NBTData, nbt.LittleEndian)
+	} else {
+		x.NBTData = nil
 	}
 
 	FuncSliceUint32Length(bufReader, &x.CanBePlacedOn, bufReader.StringUTF)
@@ -428,12 +483,12 @@ func (r *Reader) ItemInstance(i *ItemInstance) {
 
 // Item reads an ItemStack x from the underlying buffer.
 func (r *Reader) Item(x *ItemStack) {
-	x.NBTData = make(map[string]any)
 	r.Varint32(&x.NetworkID)
 	if x.NetworkID == 0 {
 		// The item was air, so there is no more data we should read for the item instance. After all, air
 		// items aren't really anything.
-		x.MetadataValue, x.Count, x.CanBePlacedOn, x.CanBreak = 0, 0, nil, nil
+		x.MetadataValue, x.Count, x.BlockRuntimeID = 0, 0, 0
+		x.NBTData, x.CanBePlacedOn, x.CanBreak = nil, nil, nil
 		return
 	}
 
@@ -463,6 +518,8 @@ func (r *Reader) Item(x *ItemStack) {
 		}
 	} else if length > 0 {
 		bufReader.NBT(&x.NBTData, nbt.LittleEndian)
+	} else {
+		x.NBTData = nil
 	}
 
 	FuncSliceUint32Length(bufReader, &x.CanBePlacedOn, bufReader.StringUTF)
@@ -513,6 +570,16 @@ func (r *Reader) EventType(x *Event) {
 	}
 }
 
+// EventOrdinal reads an Event's ordinal from the reader.
+func (r *Reader) EventOrdinal(x *Event) {
+	var ordinal uint32
+	if !lookupEventOrdinal(*x, &ordinal) {
+		r.UnknownEnumOption(*x, "event packet event ordinal")
+		return
+	}
+	r.Varuint32(&ordinal)
+}
+
 // TransactionDataType reads an InventoryTransactionData type from the reader.
 func (r *Reader) TransactionDataType(x *InventoryTransactionData) {
 	var transactionType uint32
@@ -538,59 +605,7 @@ func (r *Reader) AbilityValue(x *any) {
 	}
 }
 
-// CompressedBiomeDefinitions reads a list of compressed biome definitions from the reader. Minecraft decided to make their
-// own type of compression for this, so we have to implement it ourselves. It uses a dictionary of repeated byte sequences
-// to reduce the size of the data. The compressed data is read byte-by-byte, and if the byte is 0xff then it is assumed
-// that the next two bytes are an int16 for the dictionary index. Otherwise, the byte is copied to the output. The dictionary
-// index is then used to look up the byte sequence to be appended to the output.
-func (r *Reader) CompressedBiomeDefinitions(x *map[string]any) {
-	var length uint32
-	header := make([]byte, 10)
-	r.Varuint32(&length)
-	if _, err := r.r.Read(header); err != nil {
-		r.panic(err)
-	}
-	if !bytes.Equal(header, []byte("COMPRESSED")) {
-		r.InvalidValue(header, "compression header", fmt.Sprintf("must be COMPRESSED (%v)", []byte("COMPRESSED")))
-		return
-	}
-
-	var dictLength uint16
-	var entryLength uint8
-	r.Uint16(&dictLength)
-	dictionary := make([][]byte, dictLength)
-	for i := 0; i < int(dictLength); i++ {
-		r.Uint8(&entryLength)
-		dictionary[i] = make([]byte, int(entryLength))
-		if _, err := r.r.Read(dictionary[i]); err != nil {
-			r.panic(err)
-		}
-	}
-
-	var decompressed []byte
-	var dictIndex int16
-	for {
-		key, err := r.r.ReadByte()
-		if err != nil {
-			break
-		}
-		if key != 0xff {
-			decompressed = append(decompressed, key)
-			continue
-		}
-
-		r.Int16(&dictIndex)
-		if dictIndex >= 0 && int(dictIndex) < len(dictionary) {
-			decompressed = append(decompressed, dictionary[dictIndex]...)
-			continue
-		}
-		decompressed = append(decompressed, key)
-	}
-	if err := nbt.Unmarshal(decompressed, x); err != nil {
-		r.panic(err)
-	}
-}
-
+// Bitset reads a Bitset from the reader.
 func (r *Reader) Bitset(x *Bitset, size int) {
 	*x = NewBitset(size)
 	for i := 0; i < size; i += 7 {
@@ -611,6 +626,58 @@ func (r *Reader) Bitset(x *Bitset, size int) {
 	r.panic(errBitsetOverflow)
 }
 
+// PackSetting reads a PackSetting from the reader.
+func (r *Reader) PackSetting(x *PackSetting) {
+	r.String(&x.Name)
+	var t uint32
+	r.Varuint32(&t)
+	switch t {
+	case PackSettingTypeFloat:
+		var v float32
+		r.Float32(&v)
+		x.Value = v
+	case PackSettingTypeBool:
+		var v bool
+		r.Bool(&v)
+		x.Value = v
+	case PackSettingTypeString:
+		var v string
+		r.String(&v)
+		x.Value = v
+	default:
+		r.UnknownEnumOption(t, "pack setting")
+	}
+}
+
+// ShapeData reads a ShapeData's type from the reader.
+func (r *Reader) ShapeData(x *ShapeData) {
+	var shapeDataType uint32
+	r.Varuint32(&shapeDataType)
+	if !lookupShapeData(shapeDataType, x) {
+		r.UnknownEnumOption(shapeDataType, "debug shape data type")
+		return
+	}
+	(*x).Marshal(r)
+}
+
+// StringConst reads a string from the reader and matches its length against x.
+func (r *Reader) StringConst(x string) {
+	var length uint32
+	r.Varuint32(&length)
+	l := int(length)
+	if l != len(x) {
+		r.panicf("expected string with a length of %v, got %v", len(x), l)
+	}
+	data := make([]byte, l)
+	if _, err := r.r.Read(data); err != nil {
+		r.panic(err)
+	}
+	input := *(*string)(unsafe.Pointer(&data))
+	if !strings.EqualFold(input, x) {
+		r.panicf("expected string to be %q, got %q", x, input)
+	}
+}
+
 // SliceLimit checks if the value passed is lower than the limit passed. If
 // not, the Reader panics.
 func (r *Reader) SliceLimit(value uint32, max uint32) {
@@ -626,7 +693,7 @@ func (r *Reader) ShieldID() int32 {
 
 // UnknownEnumOption panics with an unknown enum option error.
 func (r *Reader) UnknownEnumOption(value any, enum string) {
-	r.panicf("unknown value '%v' for enum type '%v'", value, enum)
+	r.panicf("unknown value '%#v' for enum type '%v'", value, enum)
 }
 
 // InvalidValue panics with an error indicating that the value passed is not valid for a specific field.

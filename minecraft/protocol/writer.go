@@ -3,15 +3,16 @@ package protocol
 import (
 	"bytes"
 	"fmt"
-	"github.com/go-gl/mathgl/mgl32"
-	"github.com/google/uuid"
-	"github.com/sandertv/gophertunnel/minecraft/nbt"
 	"image/color"
 	"io"
 	"math/big"
 	"reflect"
 	"sort"
 	"unsafe"
+
+	"github.com/go-gl/mathgl/mgl32"
+	"github.com/google/uuid"
+	"github.com/sandertv/gophertunnel/minecraft/nbt"
 )
 
 // Writer implements writing methods for data types from Minecraft packets. Each Packet implementation has one
@@ -143,6 +144,18 @@ func (w *Writer) RGBA(x *color.RGBA) {
 	w.Uint32(&val)
 }
 
+// ARGB writes a color.RGBA x as a int32 to the underlying buffer.
+func (w *Writer) ARGB(x *color.RGBA) {
+	val := int32(x.A) | int32(x.R)<<8 | int32(x.G)<<16 | int32(x.B)<<24
+	w.Int32(&val)
+}
+
+// BEARGB writes a color.RGBA x as a big endian int32 to the underlying buffer.
+func (w *Writer) BEARGB(x *color.RGBA) {
+	val := int32(x.A) | int32(x.R)<<8 | int32(x.G)<<16 | int32(x.B)<<24
+	w.BEInt32(&val)
+}
+
 // VarRGBA writes a color.RGBA x as a varuint32 to the underlying buffer.
 func (w *Writer) VarRGBA(x *color.RGBA) {
 	val := uint32(x.R) | uint32(x.G)<<8 | uint32(x.B)<<16 | uint32(x.A)<<24
@@ -167,7 +180,7 @@ func (w *Writer) PlayerInventoryAction(x *UseItemTransactionData) {
 	Slice(w, &x.Actions)
 	w.Varuint32(&x.ActionType)
 	w.Varuint32(&x.TriggerType)
-	w.BlockPos(&x.BlockPosition)
+	w.UBlockPos(&x.BlockPosition)
 	w.Varint32(&x.BlockFace)
 	w.Varint32(&x.HotBarSlot)
 	w.ItemInstance(&x.HeldItem)
@@ -179,6 +192,29 @@ func (w *Writer) PlayerInventoryAction(x *UseItemTransactionData) {
 
 // GameRule writes a GameRule x to the Writer.
 func (w *Writer) GameRule(x *GameRule) {
+	w.String(&x.Name)
+	w.Bool(&x.CanBeModifiedByPlayer)
+
+	switch v := x.Value.(type) {
+	case bool:
+		id := uint32(1)
+		w.Varuint32(&id)
+		w.Bool(&v)
+	case uint32:
+		id := uint32(2)
+		w.Varuint32(&id)
+		w.Uint32(&v)
+	case float32:
+		id := uint32(3)
+		w.Varuint32(&id)
+		w.Float32(&v)
+	default:
+		w.UnknownEnumOption(fmt.Sprintf("%T", v), "game rule type")
+	}
+}
+
+// GameRuleLegacy writes a legacy GameRule x to the Writer.
+func (w *Writer) GameRuleLegacy(x *GameRule) {
 	w.String(&x.Name)
 	w.Bool(&x.CanBeModifiedByPlayer)
 
@@ -406,9 +442,19 @@ func (w *Writer) Recipe(x *Recipe) {
 func (w *Writer) EventType(x *Event) {
 	var t int32
 	if !lookupEventType(*x, &t) {
-		w.UnknownEnumOption(fmt.Sprintf("%T", x), "event packet event type")
+		w.UnknownEnumOption(*x, "event packet event type")
 	}
 	w.Varint32(&t)
+}
+
+// EventOrdinal writes an Event ordinal to the writer.
+func (w *Writer) EventOrdinal(x *Event) {
+	var ordinal uint32
+	if !lookupEventOrdinal(*x, &ordinal) {
+		w.UnknownEnumOption(*x, "event packet event ordinal")
+		return
+	}
+	w.Varuint32(&ordinal)
 }
 
 // TransactionDataType writes an InventoryTransactionData type to the writer.
@@ -438,43 +484,9 @@ func (w *Writer) AbilityValue(x *any) {
 	}
 }
 
-// CompressedBiomeDefinitions reads a list of compressed biome definitions from the reader. Minecraft decided to make their
-// own type of compression for this, so we have to implement it ourselves. It uses a dictionary of repeated byte sequences
-// to reduce the size of the data. The compressed data is read byte-by-byte, and if the byte is 0xff then it is assumed
-// that the next two bytes are an int16 for the dictionary index. Otherwise, the byte is copied to the output. The dictionary
-// index is then used to look up the byte sequence to be appended to the output.
-func (w *Writer) CompressedBiomeDefinitions(x *map[string]any) {
-	decompressed, err := nbt.Marshal(x)
-	if err != nil {
-		w.panicf("error marshaling nbt: %v", err)
-	}
-
-	var compressed []byte
-	buf := bytes.NewBuffer(compressed)
-	bufWriter := NewWriter(buf, w.shieldID)
-
-	header := []byte("COMPRESSED")
-	bufWriter.Bytes(&header)
-
-	// TODO: Dictionary compression implementation
-	var dictionaryLength uint16
-	bufWriter.Uint16(&dictionaryLength)
-	for _, b := range decompressed {
-		bufWriter.Uint8(&b)
-		if b == 0xff {
-			dictionaryIndex := int16(1)
-			bufWriter.Int16(&dictionaryIndex)
-		}
-	}
-
-	compressed = buf.Bytes()
-	length := uint32(len(compressed))
-	w.Varuint32(&length)
-	w.Bytes(&compressed)
-}
-
 var varintMaxByteValue = big.NewInt(0x80)
 
+// Bitset writes a Bitset x to the underlying buffer.
 func (w *Writer) Bitset(x *Bitset, size int) {
 	if x.size != size {
 		w.panicf("bitset size mismatch: expected %v, got %v", size, x.size)
@@ -492,6 +504,43 @@ func (w *Writer) Bitset(x *Bitset, size int) {
 		u.Rsh(u, 7)
 	}
 	_ = w.w.WriteByte(byte(u.Bits()[0]))
+}
+
+// PackSetting writes a PackSetting x to the underlying buffer.
+func (w *Writer) PackSetting(x *PackSetting) {
+	w.String(&x.Name)
+	var id uint32
+	switch val := x.Value.(type) {
+	case float32:
+		id = PackSettingTypeFloat
+		w.Varuint32(&id)
+		w.Float32(&val)
+	case bool:
+		id = PackSettingTypeBool
+		w.Varuint32(&id)
+		w.Bool(&val)
+	case string:
+		id = PackSettingTypeString
+		w.Varuint32(&id)
+		w.String(&val)
+	default:
+		w.UnknownEnumOption(x.Value, "pack setting")
+	}
+}
+
+// ShapeData writes a ShapeData to the writer.
+func (w *Writer) ShapeData(x *ShapeData) {
+	var shapeDataType uint32
+	if !lookupShapeDataType(*x, &shapeDataType) {
+		w.UnknownEnumOption(fmt.Sprintf("%T", *x), "debug shape data type")
+	}
+	w.Varuint32(&shapeDataType)
+	(*x).Marshal(w)
+}
+
+// StringConst writes a string to the writer.
+func (w *Writer) StringConst(x string) {
+	w.String(&x)
 }
 
 // Varint64 writes an int64 as 1-10 bytes to the underlying buffer.
@@ -563,7 +612,7 @@ func (w *Writer) ShieldID() int32 {
 
 // UnknownEnumOption panics with an unknown enum option error.
 func (w *Writer) UnknownEnumOption(value any, enum string) {
-	w.panicf("unknown value '%v' for enum type '%v'", value, enum)
+	w.panicf("unknown value '%#v' for enum type '%v'", value, enum)
 }
 
 // InvalidValue panics with an invalid value error.

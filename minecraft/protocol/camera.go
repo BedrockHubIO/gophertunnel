@@ -1,8 +1,9 @@
 package protocol
 
 import (
-	"github.com/go-gl/mathgl/mgl32"
 	"image/color"
+
+	"github.com/go-gl/mathgl/mgl32"
 )
 
 const (
@@ -50,6 +51,11 @@ const (
 	EasingTypeInOutElastic
 )
 
+const (
+	SplineEaseTypeCatmullRom = iota
+	SplineEaseTypeLinear
+)
+
 // CameraEase represents an easing function that can be used by a CameraInstructionSet.
 type CameraEase struct {
 	// Type is the type of easing function used. This is one of the constants above.
@@ -84,6 +90,8 @@ type CameraInstructionSet struct {
 	EntityOffset Optional[mgl32.Vec3]
 	// Default determines whether the camera is a default camera or not.
 	Default Optional[bool]
+	// IgnoreStartingValuesComponent behavior is currently unknown.
+	IgnoreStartingValuesComponent bool
 }
 
 // Marshal encodes/decodes a CameraInstructionSet.
@@ -96,6 +104,7 @@ func (x *CameraInstructionSet) Marshal(r IO) {
 	OptionalFunc(r, &x.ViewOffset, r.Vec2)
 	OptionalFunc(r, &x.EntityOffset, r.Vec3)
 	OptionalFunc(r, &x.Default, r.Bool)
+	r.Bool(&x.IgnoreStartingValuesComponent)
 }
 
 // CameraFadeTimeData represents the time data for a CameraInstructionFade.
@@ -144,6 +153,26 @@ func (x *CameraInstructionTarget) Marshal(r IO) {
 	r.Int64(&x.EntityUniqueID)
 }
 
+// CameraInstructionFieldOfView represents a camera instruction that updates the field of view.
+type CameraInstructionFieldOfView struct {
+	// FieldOfView is the field of view of the camera.
+	FieldOfView float32
+	// EaseTime is the time in seconds that the easing function should take.
+	EaseTime float32
+	// EaseType is the type of easing function used. This is one of the constants above.
+	EaseType uint8
+	// Clear can be set to true to clear the current instruction.
+	Clear bool
+}
+
+// Marshal encodes/decodes a CameraInstructionFieldOfView.
+func (x *CameraInstructionFieldOfView) Marshal(r IO) {
+	r.Float32(&x.FieldOfView)
+	r.Float32(&x.EaseTime)
+	r.Uint8(&x.EaseType)
+	r.Bool(&x.Clear)
+}
+
 // CameraPreset represents a basic preset that can be extended upon by more complex instructions.
 type CameraPreset struct {
 	// Name is the name of the preset. Each preset must have their own unique name.
@@ -189,11 +218,20 @@ type CameraPreset struct {
 	AudioListener Optional[byte]
 	// PlayerEffects is currently unknown.
 	PlayerEffects Optional[bool]
-	// AlignTargetAndCameraForward determines whether the camera should align the target and the camera forward
-	// or not.
-	AlignTargetAndCameraForward Optional[bool]
 	// AimAssist defines the aim assist to use when using this preset.
 	AimAssist Optional[CameraPresetAimAssist]
+	// ControlScheme is the control scheme that the client should use in this camera. It is one of the following:
+	//  - ControlSchemeLockedPlayerRelativeStrafe is the default behaviour, this cannot be set when the client
+	//    is in a custom camera.
+	//  - ControlSchemeCameraRelative makes movement relative to the camera's transform, with the client's
+	//    rotation being relative to the client's movement.
+	//  - ControlSchemeCameraRelativeStrafe makes movement relative to the camera's transform, with the
+	//    client's rotation being locked.
+	//  - ControlSchemePlayerRelative makes movement relative to the player's transform, meaning holding
+	//    left/right will make the player turn in a circle.
+	//  - ControlSchemePlayerRelativeStrafe makes movement the same as the default behaviour, but can be
+	//    used in a custom camera.
+	ControlScheme Optional[byte]
 }
 
 // Marshal encodes/decodes a CameraPreset.
@@ -218,8 +256,8 @@ func (x *CameraPreset) Marshal(r IO) {
 	OptionalFunc(r, &x.MaxYawLimit, r.Float32)
 	OptionalFunc(r, &x.AudioListener, r.Uint8)
 	OptionalFunc(r, &x.PlayerEffects, r.Bool)
-	OptionalFunc(r, &x.AlignTargetAndCameraForward, r.Bool)
 	OptionalMarshaler(r, &x.AimAssist)
+	OptionalFunc(r, &x.ControlScheme, r.Uint8)
 }
 
 // CameraPresetAimAssist represents a preset for aim assist settings.
@@ -267,6 +305,8 @@ type CameraAimAssistPriorities struct {
 	Entities []CameraAimAssistPriority
 	// Blocks is a list of priorities for specific block identifiers.
 	Blocks []CameraAimAssistPriority
+	// BlockTags is a list of priorities for specific block tags.
+	BlockTags []CameraAimAssistPriority
 	// EntityDefault is the default priority for entities.
 	EntityDefault Optional[int32]
 	// BlockDefault is the default priority for blocks.
@@ -277,6 +317,7 @@ type CameraAimAssistPriorities struct {
 func (x *CameraAimAssistPriorities) Marshal(r IO) {
 	Slice(r, &x.Entities)
 	Slice(r, &x.Blocks)
+	Slice(r, &x.BlockTags)
 	OptionalFunc(r, &x.EntityDefault, r.Int32)
 	OptionalFunc(r, &x.BlockDefault, r.Int32)
 }
@@ -301,6 +342,10 @@ type CameraAimAssistPreset struct {
 	Identifier string
 	// BlockExclusions is a list of block identifiers that should be ignored by the aim assist.
 	BlockExclusions []string
+	// EntityExclusions is a list of entity identifiers that should be ignored by the aim assist.
+	EntityExclusions []string
+	// BlockTagExclusions is a list of block tags that should be ignored by the aim assist.
+	BlockTagExclusions []string
 	// LiquidTargets is a list of entity identifiers that should be targetted when inside of a liquid.
 	LiquidTargets []string
 	// ItemSettings is a list of settings for specific item identifiers. If an item is not listed here, it
@@ -318,6 +363,8 @@ type CameraAimAssistPreset struct {
 func (x *CameraAimAssistPreset) Marshal(r IO) {
 	r.String(&x.Identifier)
 	FuncSlice(r, &x.BlockExclusions, r.String)
+	FuncSlice(r, &x.EntityExclusions, r.String)
+	FuncSlice(r, &x.BlockTagExclusions, r.String)
 	FuncSlice(r, &x.LiquidTargets, r.String)
 	Slice(r, &x.ItemSettings)
 	OptionalFunc(r, &x.DefaultItemSettings, r.String)
@@ -338,4 +385,41 @@ type CameraAimAssistItemSettings struct {
 func (x *CameraAimAssistItemSettings) Marshal(r IO) {
 	r.String(&x.Item)
 	r.String(&x.Category)
+}
+
+// CameraRotationOption represents a rotation option for camera spline instructions.
+type CameraRotationOption struct {
+	// Value is the rotation value.
+	Value mgl32.Vec3
+	// Time is the time for this rotation option.
+	Time float32
+}
+
+// Marshal encodes/decodes a CameraRotationOption.
+func (x *CameraRotationOption) Marshal(r IO) {
+	r.Vec3(&x.Value)
+	r.Float32(&x.Time)
+}
+
+// CameraSplineInstruction represents a camera instruction that creates a spline path for the camera to follow.
+type CameraSplineInstruction struct {
+	// TotalTime is the total time for the spline animation.
+	TotalTime float32
+	// EaseType is the type of easing function used. This is one of the constants above.
+	EaseType uint8
+	// Curve is a list of points that define the spline curve.
+	Curve []mgl32.Vec3
+	// ProgressKeyFrames is a list of key frames for the progress of the spline.
+	ProgressKeyFrames []mgl32.Vec2
+	// RotationOptions is a list of rotation options for the spline.
+	RotationOptions []CameraRotationOption
+}
+
+// Marshal encodes/decodes a CameraSplineInstruction.
+func (x *CameraSplineInstruction) Marshal(r IO) {
+	r.Float32(&x.TotalTime)
+	r.Uint8(&x.EaseType)
+	FuncSlice(r, &x.Curve, r.Vec3)
+	FuncSlice(r, &x.ProgressKeyFrames, r.Vec2)
+	Slice(r, &x.RotationOptions)
 }

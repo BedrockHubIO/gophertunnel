@@ -1,21 +1,29 @@
 package minecraft
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"github.com/sandertv/gophertunnel/minecraft/internal"
-	"github.com/sandertv/gophertunnel/minecraft/protocol"
-	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
-	"github.com/sandertv/gophertunnel/minecraft/resource"
 	"log/slog"
+	"math"
 	"net"
+	"net/http"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/sandertv/gophertunnel/minecraft/internal"
+	"github.com/sandertv/gophertunnel/minecraft/protocol"
+	"github.com/sandertv/gophertunnel/minecraft/protocol/login"
+	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
+	"github.com/sandertv/gophertunnel/minecraft/resource"
+	"github.com/sandertv/gophertunnel/minecraft/service"
+	"golang.org/x/oauth2"
 )
 
 // ListenConfig holds settings that may be edited to change behaviour of a Listener.
@@ -23,6 +31,11 @@ type ListenConfig struct {
 	// ErrorLog is a log.Logger that errors that occur during packet handling of
 	// clients are written to. By default, errors are not logged.
 	ErrorLog *slog.Logger
+
+	// HTTPClient is the HTTP client used for outbound HTTP requests needed by the listener,
+	// such as fetching OpenID configuration/JWKs when authentication is enabled.
+	// If nil, [http.DefaultClient] is used.
+	HTTPClient *http.Client
 
 	// AuthenticationDisabled specifies if authentication of players that join is disabled. If set to true, no
 	// verification will be done to ensure that the player connecting is authenticated using their XBOX Live
@@ -56,6 +69,10 @@ type ListenConfig struct {
 	// Compression is the packet.Compression to use for packets sent over this Conn. If set to nil, the compression
 	// will default to packet.flateCompression.
 	Compression packet.Compression // TODO: Change this to snappy once Windows crashes are resolved.
+	// CompressionThreshold specifies the minimum data size in bytes that triggers compression. Data smaller than this threshold
+	// will not be compressed. If zero, compression threshold will default to 256.
+	// A value of -1 disables compression entirely.
+	CompressionThreshold int
 	// FlushRate is the rate at which packets sent are flushed. Packets are buffered for a duration up to
 	// FlushRate and are compressed/encrypted together to improve compression ratios. The lower this
 	// time.Duration, the lower the latency but the less efficient both network and cpu wise.
@@ -69,18 +86,23 @@ type ListenConfig struct {
 	// Use Listener.AddResourcePack() to add a resource pack and Listener.RemoveResourcePack() to remove a resource pack
 	// after having called ListenConfig.Listen(). Note that these methods will not update resource packs for active connections.
 	ResourcePacks []*resource.Pack
-	// Biomes contains information about all biomes that the server has registered, which the client can use
-	// to render the world more effectively. If these are nil, the default biome definitions will be used.
-	Biomes map[string]any
 	// TexturePacksRequired specifies if clients that join must accept the texture pack in order for them to
 	// be able to join the server. If they don't accept, they can only leave the server.
 	TexturePacksRequired bool
+	// FetchResourcePacks determines which resource packs to send to a client based on its identity and client data.
+	// If set, it will be called before sending the ResourcePacksInfo packet. The returned resource packs
+	// will be forwarded to the client in place of the Listener's current ones.
+	FetchResourcePacks func(identityData login.IdentityData, clientData login.ClientData, current []*resource.Pack) []*resource.Pack
 
 	// PacketFunc is called whenever a packet is read from or written to a connection returned when using
 	// Listener.Accept. It includes packets that are otherwise covered in the connection sequence, such as the
 	// Login packet. The function is called with the header of the packet and its raw payload, the address
 	// from which the packet originated, and the destination address.
 	PacketFunc func(header packet.Header, payload []byte, src, dst net.Addr)
+
+	// MaxDecompressedLen is the maximum length of a decompressed packet to prevent potential exploits. If 0,
+	// the default value is 16MB (16 * 1024 * 1024). Setting this to a negative integer disables the limit.
+	MaxDecompressedLen int
 }
 
 // Listener implements a Minecraft listener on top of an unspecific net.Listener. It abstracts away the
@@ -101,6 +123,10 @@ type Listener struct {
 	close    chan struct{}
 
 	key *ecdsa.PrivateKey
+	// verifier is used to verify the OpenID token issued by the authorization service
+	// for authenticating incoming connections. It will be nil if authentication is
+	// disabled on ListenConfig.
+	verifier *oidc.IDTokenVerifier
 }
 
 // Listen announces on the local network address. The network is typically "raknet".
@@ -119,6 +145,29 @@ func (cfg ListenConfig) Listen(network string, address string) (*Listener, error
 	}
 	if cfg.FlushRate == 0 {
 		cfg.FlushRate = time.Second / 20
+	}
+	if cfg.CompressionThreshold == 0 {
+		cfg.CompressionThreshold = 256
+	} else if cfg.CompressionThreshold < 0 {
+		cfg.CompressionThreshold = 0
+	}
+	if cfg.MaxDecompressedLen == 0 {
+		cfg.MaxDecompressedLen = 16 * 1024 * 1024 // 16MB
+	} else if cfg.MaxDecompressedLen < 0 {
+		cfg.MaxDecompressedLen = math.MaxInt
+	}
+
+	var verifier *oidc.IDTokenVerifier
+	if !cfg.AuthenticationDisabled {
+		var err error
+		ctx := context.Background()
+		if cfg.HTTPClient != nil {
+			ctx = context.WithValue(ctx, oauth2.HTTPClient, cfg.HTTPClient)
+		}
+		verifier, err = oidcVerifier(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("create default OIDC verifier: %w", err)
+		}
 	}
 
 	n, ok := networkByID(network, cfg.ErrorLog)
@@ -141,6 +190,7 @@ func (cfg ListenConfig) Listen(network string, address string) (*Listener, error
 		incoming: make(chan *Conn),
 		close:    make(chan struct{}),
 		key:      key,
+		verifier: verifier,
 	}
 
 	// Actually start listening.
@@ -157,6 +207,64 @@ func (cfg ListenConfig) Listen(network string, address string) (*Listener, error
 func Listen(network, address string) (*Listener, error) {
 	var lc ListenConfig
 	return lc.Listen(network, address)
+}
+
+// authEnvCache holds authorization environment used to issue or verify
+// the multiplayer token for OpenID authentication. It is cached by authEnv.
+var (
+	authEnvCache   *service.AuthorizationEnvironment
+	authEnvCacheMu sync.Mutex
+)
+
+// authEnv returns the authorization environment that can be used for issuing
+// or verifying the multiplayer token for OpenID authentication.
+// This method is only called once and cached globally which means it will
+// use the HTTP client from the first caller's context (oauth2.HTTPClient).
+func authEnv(ctx context.Context) (*service.AuthorizationEnvironment, error) {
+	authEnvCacheMu.Lock()
+	defer authEnvCacheMu.Unlock()
+	if authEnvCache != nil {
+		return authEnvCache, nil
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	discovery, err := service.Discover(ctx, service.ApplicationTypeMinecraftPE, protocol.CurrentVersion)
+	if err != nil {
+		return nil, fmt.Errorf("discover service endpoints: %w", err)
+	}
+	e := new(service.AuthorizationEnvironment)
+	if err := discovery.Environment(e); err != nil {
+		return nil, fmt.Errorf("decode environment for auth: %w", err)
+	}
+	if client, _ := ctx.Value(oauth2.HTTPClient).(*http.Client); client != nil {
+		e.HTTPClient = client
+	}
+	authEnvCache = e
+	return e, nil
+}
+
+// oidcVerifier returns the OpenID token verifier that could be used for
+// authenticating new multiplayer tokens issued by the authorization service
+// of Minecraft.
+func oidcVerifier(ctx context.Context) (*oidc.IDTokenVerifier, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	e, err := authEnv(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("obtain environment for authorization: %w", err)
+	}
+	// Verifier already caches the *oidc.IDTokenVerifier so we don't need to cache it here.
+	return e.VerifierContext(ctx)
 }
 
 // Accept accepts a fully connected (on Minecraft layer) connection which is ready to receive and send
@@ -208,6 +316,11 @@ func (listener *Listener) Addr() net.Addr {
 // Close closes the listener and the underlying net.Listener. Pending calls to Accept will fail immediately.
 func (listener *Listener) Close() error {
 	return listener.listener.Close()
+}
+
+// PlayerCount returns the number of active connections.
+func (listener *Listener) PlayerCount() int {
+	return int(listener.playerCount.Load())
 }
 
 // updatePongData updates the pong data of the listener using the current only players, maximum players and
@@ -262,14 +375,17 @@ func (listener *Listener) createConn(netConn net.Conn) {
 	conn := newConn(netConn, listener.key, listener.cfg.ErrorLog, proto{}, listener.cfg.FlushRate, true)
 	conn.acceptedProto = append(listener.cfg.AcceptedProtocols, proto{})
 	conn.compression = listener.cfg.Compression
+	conn.compressionThreshold = listener.cfg.CompressionThreshold
+	conn.maxDecompressedLen = listener.cfg.MaxDecompressedLen
 	conn.pool = conn.proto.Packets(true)
 
 	conn.packetFunc = listener.cfg.PacketFunc
 	conn.texturePacksRequired = listener.cfg.TexturePacksRequired
 	conn.resourcePacks = packs
-	conn.biomes = listener.cfg.Biomes
+	conn.fetchResourcePacks = listener.cfg.FetchResourcePacks
 	conn.gameData.WorldName = listener.status().ServerName
 	conn.authEnabled = !listener.cfg.AuthenticationDisabled
+	conn.verifier = listener.verifier
 	conn.disconnectOnUnknownPacket = !listener.cfg.AllowUnknownPackets
 	conn.disconnectOnInvalidPacket = !listener.cfg.AllowInvalidPackets
 
